@@ -1,92 +1,391 @@
 /**
- * Gestionnaire de tracking
- * 
- * Gère l'envoi d'événements de tracking (Facebook, etc.)
- * avec des mécanismes pour éviter les duplications.
+ * Gestionnaire de tracking - VERSION FINALE
  */
 (function($) {
     'use strict';
     
-    // Gestionnaire de tracking
     window.TrackingManager = {
-        // Configuration
         config: {
             enableFacebook: true,
             enableLocalStorage: true,
             maxQueueSize: 20,
-            queueProcessingInterval: 1000
+            queueProcessingInterval: 1000,
+            retryAttempts: 3,
+            retryDelay: 2000,
+            debugMode: false
         },
         
-        // État interne
         state: {
             eventsSent: {
-                addToCart: false,
-                initiateCheckout: false,
-                purchase: false
+                addToCart: {},
+                initiateCheckout: {},
+                purchase: {}
             },
             queue: [],
             processing: false,
-            fbPixelReady: false
+            fbPixelReady: false,
+            sessionId: null,
+            initialized: false
         },
         
-        /**
-         * Initialiser le gestionnaire
-         */
         init: function() {
-            console.log('🔧 Initialisation du gestionnaire de tracking');
+            if (this.state.initialized) {
+                return this;
+            }
             
-            // Vérifier si Facebook Pixel est disponible
+            console.log('🔧 Initialisation tracking manager');
+            
+            this.loadConfig();
+            this.state.sessionId = this.generateSessionId();
             this.checkPixelAvailability();
-            
-            // Restaurer les événements envoyés
             this.restoreEventState();
-            
-            // Attacher les écouteurs d'événements
             this.attachEventListeners();
-            
-            // Traiter la file d'attente
             this.startQueueProcessor();
             
-            console.log('✅ Gestionnaire de tracking initialisé');
+            this.state.initialized = true;
+            
+            console.log('✅ Tracking manager initialisé');
             
             return this;
         },
         
-        /**
-         * Vérifier si Facebook Pixel est disponible
-         */
-        checkPixelAvailability: function() {
-            // Vérifier si fbq est défini
-            if (typeof fbq === 'function') {
-                this.state.fbPixelReady = true;
-                console.log('✅ Facebook Pixel détecté');
-            } else {
-                console.log('⏳ Facebook Pixel non détecté, en attente...');
-                
-                // Vérifier périodiquement pendant 10 secondes
-                var self = this;
-                var attempts = 0;
-                var checkInterval = setInterval(function() {
-                    attempts++;
-                    
-                    if (typeof fbq === 'function') {
-                        self.state.fbPixelReady = true;
-                        console.log('✅ Facebook Pixel détecté après ' + attempts + ' tentatives');
-                        clearInterval(checkInterval);
-                        
-                        // Traiter la file d'attente
-                        self.processQueue();
-                    } else if (attempts >= 10) {
-                        console.warn('⚠️ Facebook Pixel non détecté après 10 tentatives');
-                        clearInterval(checkInterval);
-                    }
-                }, 1000);
+        loadConfig: function() {
+            if (typeof wc_opc_params !== 'undefined') {
+                this.config.debugMode = wc_opc_params.debug_mode === true || wc_opc_params.debug_mode === 'yes';
             }
         },
         
-        /**
-         * Restaurer l'état des événements envoyés
-         */
+        generateSessionId: function() {
+            return 'opc_' + Date.now() + '_' + Math.random().toString(36).substr(2, 9);
+        },
+        
+        checkPixelAvailability: function() {
+            var self = this;
+            
+            if (typeof fbq === 'function') {
+                this.state.fbPixelReady = true;
+                console.log('✅ Facebook Pixel détecté');
+                return;
+            }
+            
+            var attempts = 0;
+            var maxAttempts = 20;
+            
+            var checkInterval = setInterval(function() {
+                attempts++;
+                
+                if (typeof fbq === 'function') {
+                    self.state.fbPixelReady = true;
+                    console.log('✅ Facebook Pixel détecté après ' + attempts + ' tentatives');
+                    clearInterval(checkInterval);
+                    self.processQueue();
+                } else if (attempts >= maxAttempts) {
+                    console.warn('⚠️ Facebook Pixel non détecté après ' + maxAttempts + ' tentatives');
+                    clearInterval(checkInterval);
+                }
+            }, 1000);
+        },
+        
+        attachEventListeners: function() {
+            var self = this;
+            
+            $(document).on('wc_opc_draft_order_created', function(e, data) {
+                if (self.config.debugMode) {
+                    console.log('🎯 Draft order created:', data);
+                }
+                self.sendAddToCartEvent(data);
+            });
+            
+            $(document).on('wc_opc_checkout_success', function(e, data) {
+                if (self.config.debugMode) {
+                    console.log('🎯 Checkout success:', data);
+                }
+                self.sendCheckoutEvents(data);
+            });
+        },
+        
+        sendAddToCartEvent: function(data) {
+            try {
+                var productId = data.product_id || data.draft_product_id;
+                var orderId = data.order_id || data.draft_order_id;
+                
+                if (!productId) {
+                    console.error('❌ Product ID manquant pour AddToCart');
+                    return;
+                }
+                
+                var eventKey = productId + '_' + (orderId || 'draft');
+                if (this.state.eventsSent.addToCart[eventKey]) {
+                    console.log('⚠️ AddToCart déjà envoyé pour ' + eventKey);
+                    return;
+                }
+                
+                var eventData = this.prepareEventData(data, 'AddToCart');
+                if (!eventData) {
+                    console.error('❌ Impossible de préparer les données AddToCart');
+                    return;
+                }
+                
+                eventData.event_id = 'opc_addtocart_' + productId + '_' + this.state.sessionId + '_' + Date.now();
+                
+                if (this.config.debugMode) {
+                    console.log('📤 Préparation AddToCart:', eventData);
+                }
+                
+                this.addToQueue('AddToCart', eventData, eventKey);
+                
+                this.state.eventsSent.addToCart[eventKey] = Date.now();
+                this.saveEventState();
+                
+                console.log('✅ AddToCart préparé pour le produit ' + productId);
+                
+            } catch (error) {
+                console.error('❌ Erreur sendAddToCartEvent:', error);
+            }
+        },
+        
+        sendCheckoutEvents: function(data) {
+            try {
+                var productId = data.product_id;
+                var orderId = data.order_id;
+                
+                if (!productId || !orderId) {
+                    console.error('❌ Product ID ou Order ID manquant');
+                    return;
+                }
+                
+                var initiateKey = 'initiate_' + orderId + '_' + productId;
+                var purchaseKey = 'purchase_' + orderId + '_' + productId;
+                
+                var eventData = this.prepareEventData(data, 'Purchase');
+                if (!eventData) {
+                    console.error('❌ Impossible de préparer les données checkout');
+                    return;
+                }
+                
+                if (this.config.debugMode) {
+                    console.log('📤 Préparation checkout events:', eventData);
+                }
+                
+                // InitiateCheckout
+                if (!this.state.eventsSent.initiateCheckout[initiateKey]) {
+                    var initiateData = Object.assign({}, eventData);
+                    initiateData.event_id = 'opc_initiate_' + orderId + '_' + this.state.sessionId + '_' + Date.now();
+                    
+                    this.addToQueue('InitiateCheckout', initiateData, initiateKey);
+                    this.state.eventsSent.initiateCheckout[initiateKey] = Date.now();
+                    
+                    console.log('✅ InitiateCheckout préparé pour ' + orderId);
+                }
+                
+                // Purchase
+                if (!this.state.eventsSent.purchase[purchaseKey]) {
+                    var self = this;
+                    setTimeout(function() {
+                        var purchaseData = Object.assign({}, eventData);
+                        purchaseData.event_id = 'opc_purchase_' + orderId + '_' + self.state.sessionId + '_' + Date.now();
+                        
+                        purchaseData.contents = [{
+                            id: 'wc_post_id_' + productId,
+                            quantity: 1
+                        }];
+                        
+                        self.addToQueue('Purchase', purchaseData, purchaseKey);
+                        self.state.eventsSent.purchase[purchaseKey] = Date.now();
+                        self.saveEventState();
+                        
+                        console.log('✅ Purchase préparé pour ' + orderId);
+                    }, 1000);
+                }
+                
+                this.saveEventState();
+                
+            } catch (error) {
+                console.error('❌ Erreur sendCheckoutEvents:', error);
+            }
+        },
+        
+        prepareEventData: function(data, eventType) {
+            try {
+                var productId = data.product_id || data.draft_product_id;
+                
+                if (!productId) {
+                    return null;
+                }
+                
+                var price = 0;
+                
+                if (data.total_price) {
+                    price = parseFloat(data.total_price);
+                } else {
+                    var bundleOption = $('input[name="bundle_option"]:checked');
+                    if (bundleOption.length && bundleOption.data('price')) {
+                        price = parseFloat(bundleOption.data('price'));
+                    } else if (typeof wc_opc_params !== 'undefined' && wc_opc_params.product) {
+                        price = parseFloat(wc_opc_params.product.price) || 0;
+                        var quantity = parseInt($('#wc_opc_quantity').val()) || 1;
+                        price = price * quantity;
+                    }
+                }
+                
+                if (price <= 0) {
+                    price = 1;
+                }
+                
+                // Moitié du prix
+                var eventValue = price / 2;
+                
+                var eventData = {
+                    value: eventValue,
+                    currency: (typeof wc_opc_params !== 'undefined' && wc_opc_params.product) ? 
+                        wc_opc_params.product.currency : 'TND',
+                    content_ids: ['wc_post_id_' + productId],
+                    content_type: 'product',
+                    content_name: (typeof wc_opc_params !== 'undefined' && wc_opc_params.product) ? 
+                        wc_opc_params.product.name : document.title,
+                    source: 'woocommerce-opc',
+                    version: (typeof wc_opc_params !== 'undefined') ? wc_opc_params.version : '2.0.0',
+                    pluginVersion: '2.0.0'
+                };
+                
+                if (eventType === 'AddToCart' || eventType === 'Purchase') {
+                    eventData.contents = [{
+                        id: 'wc_post_id_' + productId,
+                        quantity: 1
+                    }];
+                }
+                
+                if (typeof wc_opc_params !== 'undefined' && wc_opc_params.product && wc_opc_params.product.categories) {
+                    eventData.content_category = wc_opc_params.product.categories;
+                } else {
+                    eventData.content_category = 'Tous les produits';
+                }
+                
+                return eventData;
+                
+            } catch (error) {
+                console.error('❌ Erreur prepareEventData:', error);
+                return null;
+            }
+        },
+        
+        addToQueue: function(eventType, eventData, identifier) {
+            try {
+                var isDuplicate = this.state.queue.some(function(item) {
+                    return item.type === eventType && item.identifier === identifier;
+                });
+                
+                if (isDuplicate) {
+                    console.log('⚠️ Événement déjà en file:', eventType, identifier);
+                    return;
+                }
+                
+                this.state.queue.push({
+                    type: eventType,
+                    data: eventData,
+                    identifier: identifier,
+                    timestamp: Date.now(),
+                    attempts: 0
+                });
+                
+                console.log('📤 Ajouté à la file:', eventType, identifier);
+                
+                if (this.state.queue.length > this.config.maxQueueSize) {
+                    this.state.queue = this.state.queue.slice(-this.config.maxQueueSize);
+                }
+                
+                this.processQueue();
+                
+            } catch (error) {
+                console.error('❌ Erreur addToQueue:', error);
+            }
+        },
+        
+        processQueue: function() {
+            if (this.state.queue.length === 0 || this.state.processing) {
+                return;
+            }
+            
+            if (!this.state.fbPixelReady) {
+                console.log('⏳ Pixel non prêt');
+                return;
+            }
+            
+            this.state.processing = true;
+            
+            var event = this.state.queue.shift();
+            var self = this;
+            
+            this.sendEvent(event.type, event.data, function(success) {
+                self.state.processing = false;
+                
+                if (!success) {
+                    event.attempts++;
+                    
+                    if (event.attempts < self.config.retryAttempts) {
+                        console.log('🔄 Retry ' + event.type + ' (tentative ' + event.attempts + ')');
+                        self.state.queue.unshift(event);
+                        
+                        setTimeout(function() {
+                            self.processQueue();
+                        }, self.config.retryDelay * event.attempts);
+                    } else {
+                        console.error('❌ Abandon ' + event.type + ' après ' + self.config.retryAttempts + ' tentatives');
+                    }
+                } else {
+                    console.log('✅ ' + event.type + ' envoyé avec succès');
+                }
+                
+                if (self.state.queue.length > 0) {
+                    setTimeout(function() {
+                        self.processQueue();
+                    }, 500);
+                }
+            });
+        },
+        
+        sendEvent: function(eventType, eventData, callback) {
+            var self = this;
+            var fbqSuccess = false;
+            
+            if (this.config.enableFacebook && typeof fbq === 'function') {
+                try {
+                    var fbqData = Object.assign({}, eventData);
+                    delete fbqData.source;
+                    delete fbqData.version;
+                    delete fbqData.pluginVersion;
+                    delete fbqData.event_id;
+                    
+                    fbq('track', eventType, fbqData);
+                    fbqSuccess = true;
+                    
+                    console.log('✅ ' + eventType + ' envoyé via fbq');
+                } catch (e) {
+                    console.error('❌ Erreur fbq ' + eventType + ':', e);
+                }
+            }
+            
+            if (callback) {
+                callback(fbqSuccess);
+            }
+        },
+        
+        saveEventState: function() {
+            if (this.config.enableLocalStorage && typeof(Storage) !== 'undefined') {
+                try {
+                    var stateToSave = {
+                        eventsSent: this.state.eventsSent,
+                        sessionId: this.state.sessionId,
+                        timestamp: Date.now()
+                    };
+                    
+                    localStorage.setItem('wc_opc_tracking_state', JSON.stringify(stateToSave));
+                } catch (e) {
+                    console.error('❌ Erreur sauvegarde état:', e);
+                }
+            }
+        },
+        
         restoreEventState: function() {
             if (this.config.enableLocalStorage && typeof(Storage) !== 'undefined') {
                 try {
@@ -94,53 +393,43 @@
                     if (storedState) {
                         var parsedState = JSON.parse(storedState);
                         
-                        if (parsedState && parsedState.eventsSent) {
-                            this.state.eventsSent = parsedState.eventsSent;
-                            console.log('📋 État des événements restauré:', this.state.eventsSent);
+                        if (parsedState && parsedState.timestamp) {
+                            var age = Date.now() - parsedState.timestamp;
+                            var maxAge = 24 * 60 * 60 * 1000; // 24 heures
+                            
+                            if (age < maxAge && parsedState.eventsSent) {
+                                this.state.eventsSent = parsedState.eventsSent;
+                                console.log('📋 État des événements restauré');
+                            } else {
+                                this.resetEventState();
+                            }
                         }
                     }
                 } catch (e) {
-                    console.error('❌ Erreur lors de la restauration de l\'état des événements:', e);
+                    console.error('❌ Erreur restauration état:', e);
+                    this.resetEventState();
                 }
             }
         },
         
-        /**
-         * Sauvegarder l'état des événements envoyés
-         */
-        saveEventState: function() {
-            if (this.config.enableLocalStorage && typeof(Storage) !== 'undefined') {
+        resetEventState: function() {
+            this.state.eventsSent = {
+                addToCart: {},
+                initiateCheckout: {},
+                purchase: {}
+            };
+            
+            if (typeof(Storage) !== 'undefined') {
                 try {
-                    localStorage.setItem('wc_opc_tracking_state', JSON.stringify({
-                        eventsSent: this.state.eventsSent,
-                        timestamp: new Date().getTime()
-                    }));
+                    localStorage.removeItem('wc_opc_tracking_state');
                 } catch (e) {
-                    console.error('❌ Erreur lors de la sauvegarde de l\'état des événements:', e);
+                    console.error('❌ Erreur nettoyage état:', e);
                 }
             }
+            
+            console.log('🔄 État des événements réinitialisé');
         },
         
-        /**
-         * Attacher les écouteurs d'événements
-         */
-        attachEventListeners: function() {
-            var self = this;
-            
-            // Écouter l'événement de création de commande draft
-            $(document).on('wc_opc_draft_order_created', function(e, data) {
-                self.sendAddToCartEvent(data);
-            });
-            
-            // Écouter l'événement de succès de checkout
-            $(document).on('wc_opc_checkout_success', function(e, data) {
-                self.sendCheckoutEvents(data);
-            });
-        },
-        
-        /**
-         * Démarrer le processeur de file d'attente
-         */
         startQueueProcessor: function() {
             var self = this;
             
@@ -149,213 +438,28 @@
                     self.processQueue();
                 }
             }, this.config.queueProcessingInterval);
-        },
-        
-        /**
-         * Ajouter un événement à la file d'attente
-         */
-        addToQueue: function(eventType, eventData) {
-            // Éviter les doublons dans la file d'attente
-            var isDuplicate = this.state.queue.some(function(item) {
-                return item.type === eventType;
-            });
+        }
+    };
+    
+    $(document).ready(function() {
+        if ($('#wc_opc_checkout_form').length) {
+            TrackingManager.init();
             
-            if (isDuplicate) {
-                console.log('⚠️ Événement déjà dans la file d\'attente:', eventType);
-                return;
-            }
-            
-            // Ajouter à la file d'attente
-            this.state.queue.push({
-                type: eventType,
-                data: eventData,
-                timestamp: new Date().getTime(),
-                attempts: 0
-            });
-            
-            console.log('📤 Événement ajouté à la file d\'attente:', eventType);
-            
-            // Limiter la taille de la file d'attente
-            if (this.state.queue.length > this.config.maxQueueSize) {
-                this.state.queue = this.state.queue.slice(-this.config.maxQueueSize);
-            }
-            
-            // Essayer de traiter la file d'attente immédiatement
-            this.processQueue();
-        },
-        
-        /**
-         * Traiter la file d'attente d'événements
-         */
-        processQueue: function() {
-            // Si pas d'événements ou déjà en cours de traitement
-            if (this.state.queue.length === 0 || this.state.processing) {
-                return;
-            }
-            
-            // Si Pixel n'est pas prêt
-            if (!this.state.fbPixelReady) {
-                console.log('⏳ Pixel non prêt, traitement reporté');
-                return;
-            }
-            
-            this.state.processing = true;
-            
-            // Récupérer le premier événement de la file
-            var event = this.state.queue.shift();
-            
-            // Envoyer l'événement
-            this.sendEvent(event.type, event.data, function(success) {
-                this.state.processing = false;
+            var fbqCheckCount = 0;
+            var fbqCheckInterval = setInterval(function() {
+                fbqCheckCount++;
                 
-                if (!success) {
-                    // En cas d'échec, remettre dans la file d'attente si pas trop de tentatives
-                    event.attempts++;
-                    
-                    if (event.attempts < 3) {
-                        this.state.queue.unshift(event);
-                    } else {
-                        console.error('❌ Abandon de l\'événement après 3 tentatives:', event.type);
-                    }
+                if (typeof fbq === 'function' && !TrackingManager.state.fbPixelReady) {
+                    TrackingManager.state.fbPixelReady = true;
+                    console.log('✅ Facebook Pixel détecté après init');
+                    TrackingManager.processQueue();
                 }
                 
-                // Traiter l'événement suivant s'il y en a
-                if (this.state.queue.length > 0) {
-                    setTimeout(function() {
-                        this.processQueue();
-                    }.bind(this), 500); // Petite pause entre les événements
+                if (fbqCheckCount >= 20) {
+                    clearInterval(fbqCheckInterval);
                 }
-            }.bind(this));
-        },
-        
-        /**
-         * Envoyer un événement de tracking
-         */
-        sendEvent: function(eventType, eventData, callback) {
-            // Si Facebook Pixel est disponible
-            if (this.config.enableFacebook && typeof fbq === 'function') {
-                try {
-                    // Envoyer l'événement à Facebook
-                    fbq('track', eventType, eventData);
-                    
-                    console.log('✅ Événement ' + eventType + ' envoyé à Facebook');
-                    
-                    // Marquer comme envoyé
-                    if (eventType === 'AddToCart') this.state.eventsSent.addToCart = true;
-                    if (eventType === 'InitiateCheckout') this.state.eventsSent.initiateCheckout = true;
-                    if (eventType === 'Purchase') this.state.eventsSent.purchase = true;
-                    
-                    // Sauvegarder l'état
-                    this.saveEventState();
-                    
-                    if (callback) callback(true);
-                } catch (e) {
-                    console.error('❌ Erreur lors de l\'envoi de l\'événement à Facebook:', e);
-                    if (callback) callback(false);
-                }
-            } else {
-                console.warn('⚠️ Facebook Pixel non disponible');
-                if (callback) callback(false);
-            }
-        },
-        
-        /**
-        * Envoyer l'événement AddToCart
-        */
-       sendAddToCartEvent: function(data) {
-           // Éviter les doublons
-           if (this.state.eventsSent.addToCart) {
-               console.log('⚠️ Événement AddToCart déjà envoyé, ignoré');
-               return;
-           }
-           
-           // Préparer les données
-           var eventData = this.prepareEventData(data);
-           
-           // Ajouter à la file d'attente
-           this.addToQueue('AddToCart', eventData);
-       },
-       
-       /**
-        * Envoyer les événements de checkout (InitiateCheckout et Purchase)
-        */
-       sendCheckoutEvents: function(data) {
-           // Préparer les données (les mêmes pour les deux événements)
-           var eventData = this.prepareEventData(data);
-           
-           // Envoyer InitiateCheckout si pas déjà envoyé
-           if (!this.state.eventsSent.initiateCheckout) {
-               this.addToQueue('InitiateCheckout', eventData);
-           }
-           
-           // Envoyer Purchase si pas déjà envoyé (après un petit délai)
-           if (!this.state.eventsSent.purchase) {
-               var self = this;
-               setTimeout(function() {
-                   self.addToQueue('Purchase', eventData);
-               }, 500);
-           }
-       },
-       
-       /**
-        * Préparer les données d'événement
-        */
-       prepareEventData: function(data) {
-           // Récupérer le produit et le prix
-           var productId = data.product_id || $('input[name="product_id"]').val();
-           var price = 0;
-           
-           // Essayer d'obtenir le prix du bundle si applicable
-           var bundleOption = $('input[name="bundle_option"]:checked');
-           if (bundleOption.length && bundleOption.data('price')) {
-               price = parseFloat(bundleOption.data('price'));
-           } else {
-               // Sinon, récupérer depuis les données produit de wc_opc_params
-               if (typeof wc_opc_params !== 'undefined' && wc_opc_params.product) {
-                   price = parseFloat(wc_opc_params.product.price) || 0;
-               }
-               
-               // Multiplier par la quantité
-               var quantity = parseInt($('#wc_opc_quantity').val()) || 1;
-               price = price * quantity;
-           }
-           
-           // Utiliser la moitié du prix pour les événements Facebook (comme dans l'ancienne version)
-           var halfPrice = price / 2;
-           
-           // Préparer les données pour Facebook
-           return {
-               value: halfPrice,
-               currency: (typeof wc_opc_params !== 'undefined' && wc_opc_params.product) ? wc_opc_params.product.currency : 'TND',
-               content_ids: ['product_' + productId],
-               content_type: 'product',
-               content_name: (typeof wc_opc_params !== 'undefined' && wc_opc_params.product) ? wc_opc_params.product.name : document.title
-           };
-       },
-       
-       /**
-        * Réinitialiser l'état des événements envoyés
-        */
-       resetEventState: function() {
-           this.state.eventsSent = {
-               addToCart: false,
-               initiateCheckout: false,
-               purchase: false
-           };
-           
-           this.saveEventState();
-           
-           console.log('🔄 État des événements réinitialisé');
-       }
-   };
-   
-   // Initialiser quand le document est prêt
-   $(document).ready(function() {
-       // Vérifier si le formulaire existe
-       if ($('#wc_opc_checkout_form').length) {
-           // Initialiser le gestionnaire de tracking
-           TrackingManager.init();
-       }
-   });
-   
+            }, 1000);
+        }
+    });
+    
 })(jQuery);
