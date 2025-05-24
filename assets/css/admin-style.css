@@ -1,0 +1,195 @@
+/**
+ * Styles pour l'interface d'administration
+ */
+
+/* Conteneur principal */
+.wc-opc-admin-settings {
+    margin: 20px 0;
+}
+
+/* Sections d'information */
+.wc-opc-admin-info {
+    margin-top: 30px;
+    padding: 20px;
+    background-color: #f8f8f8;
+    border-radius: 5px;
+    border-left: 4px solid #2271b1;
+}
+
+.wc-opc-admin-info h2 {
+    margin-top: 0;
+    color: #2271b1;
+}
+
+.wc-opc-admin-info h3 {
+    margin: 20px 0 10px;
+    color: #333;
+}
+
+.wc-opc-admin-info ul {
+    margin-left: 20px;
+    list-style-type: disc;
+}
+
+.wc-opc-admin-info .button {
+    margin-right: 10px;
+}
+
+/* Tableaux d'informations */
+.wc-opc-stats-table {
+    width: 100%;
+    border-collapse: collapse;
+    margin: 20px 0;
+}
+
+.wc-opc-stats-table th, 
+.wc-opc-stats-table td {
+    padding: 10px;
+    text-align: left;
+    border-bottom: 1px solid #ddd;
+}
+
+.wc-opc-stats-table th {
+    background-color: #f4f4f4;
+    font-weight: 600;
+}
+
+.wc-opc-stats-table tr:hover {
+    background-color: #f9f9f9;
+}
+
+/* Onglets */
+.wc-opc-tabs {
+    margin-bottom: 20px;
+    border-bottom: 1px solid #ccc;
+}
+
+.wc-opc-tabs .wc-opc-tab {
+    display: inline-block;
+    padding: 10px 15px;
+    margin-bottom: -1px;
+    border: 1px solid transparent;
+    border-top-left-radius: 4px;
+    border-top-right-radius: 4px;
+    font-weight: 500;
+    cursor: pointer;
+}
+
+.wc-opc-tabs .wc-opc-tab.active {
+    border-color: #ccc;
+    border-bottom-color: #f1f1f1;
+    background-color: #f1f1f1;
+}
+
+.wc-opc-tab-content {
+    display: none;
+    padding: 20px;
+    background-color: #f1f1f1;
+    border-radius: 0 0 4px 4px;
+}
+
+.wc-opc-tab-content.active {
+    display: block;
+}
+
+/* Messages */
+.wc-opc-message {
+    padding: 10px 15px;
+    margin: 10px 0;
+    border-radius: 4px;
+}
+
+.wc-opc-message-success {
+    background-color: #d4edda;
+    color: #155724;
+    border: 1px solid #c3e6cb;
+}
+
+.wc-opc-message-warning {
+    background-color: #fff3cd;
+    color: #856404;
+    border: 1px solid #ffeeba;
+}
+
+.wc-opc-message-error {
+    background-color: #f8d7da;
+    color: #721c24;
+    border: 1px solid #f5c6cb;
+}
+
+/* Statistiques et indicateurs */
+.wc-opc-stats-cards {
+   display: flex;
+   flex-wrap: wrap;
+   gap: 20px;
+   margin-bottom: 30px;
+}
+
+.wc-opc-stats-card {
+   flex: 1;
+   min-width: 200px;
+   padding: 20px;
+   background-color: #fff;
+   border-radius: 5px;
+   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.1);
+   text-align: center;
+}
+
+.wc-opc-stats-card-value {
+   font-size: 32px;
+   font-weight: 600;
+   margin: 10px 0;
+   color: #2271b1;
+}
+
+.wc-opc-stats-card-title {
+   font-size: 14px;
+   color: #666;
+   margin: 0;
+}
+
+/* Configuration des bundles */
+#wc_opc_bundle_options {
+   padding: 15px;
+   background-color: #f8f8f8;
+   border-radius: 5px;
+   margin: 15px 0;
+}
+
+#wc_opc_bundle_table {
+   width: 100%;
+   border-collapse: collapse;
+}
+
+#wc_opc_bundle_table th,
+#wc_opc_bundle_table td {
+   padding: 10px;
+   vertical-align: middle;
+}
+
+#wc_opc_bundle_table th {
+   text-align: left;
+   font-weight: 600;
+}
+
+#wc_opc_bundle_table input[type="text"],
+#wc_opc_bundle_table input[type="number"] {
+   width: 100%;
+}
+
+/* Responsive */
+@media (max-width: 782px) {
+   .wc-opc-stats-cards {
+       flex-direction: column;
+   }
+   
+   .wc-opc-stats-card {
+       width: 100%;
+   }
+   
+   .wc-opc-tabs .wc-opc-tab {
+       display: block;
+       margin-bottom: 5px;
+       border-radius: 4px;
+   }
+}
