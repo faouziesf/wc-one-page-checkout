@@ -2,38 +2,31 @@
 /**
  * Plugin Name: WooCommerce One Page Checkout Premium
  * Plugin URI: https://votre-site.com/plugins/wc-one-page-checkout
- * Description: Système de checkout directement sur la page produit avec gestion efficace des commandes draft et suivi en temps réel
- * Version: 2.0.0
+ * Description: Système de checkout directement sur la page produit avec gestion efficace des commandes draft et suivi en temps réel CORRIGÉ
+ * Version: 2.0.1
  * Author: Faouzi
  * Domain Path: /languages
  * Requires at least: 5.0
  * Requires PHP: 7.2
  */
 
-// Si ce fichier est appelé directement, on sort.
 if (!defined('ABSPATH')) {
     exit;
 }
 
 // Définir les constantes
-define('WC_OPC_VERSION', '2.0.0');
+define('WC_OPC_VERSION', '2.0.1');
 define('WC_OPC_PATH', plugin_dir_path(__FILE__));
 define('WC_OPC_URL', plugin_dir_url(__FILE__));
 define('WC_OPC_BASENAME', plugin_basename(__FILE__));
 
 /**
- * Classe principale du plugin
+ * Classe principale du plugin CORRIGÉE
  */
 class WC_One_Page_Checkout {
 
-    /**
-     * Instance singleton
-     */
     private static $instance = null;
 
-    /**
-     * Obtenir l'instance singleton
-     */
     public static function get_instance() {
         if (null === self::$instance) {
             self::$instance = new self();
@@ -41,27 +34,15 @@ class WC_One_Page_Checkout {
         return self::$instance;
     }
 
-    /**
-     * Constructeur
-     */
     private function __construct() {
-        // Vérifier si WooCommerce est actif
         add_action('plugins_loaded', array($this, 'check_woocommerce'));
-        
-        // Charger les traductions
         add_action('plugins_loaded', array($this, 'load_textdomain'));
-        
-        // Initialiser le plugin
         add_action('plugins_loaded', array($this, 'init'), 20);
         
-        // Ajouter hooks d'activation/désactivation
         register_activation_hook(__FILE__, array($this, 'activate'));
         register_deactivation_hook(__FILE__, array($this, 'deactivate'));
     }
 
-    /**
-     * Vérifier si WooCommerce est actif
-     */
     public function check_woocommerce() {
         if (!class_exists('WooCommerce')) {
             add_action('admin_notices', array($this, 'woocommerce_missing_notice'));
@@ -69,9 +50,6 @@ class WC_One_Page_Checkout {
         }
     }
 
-    /**
-     * Message d'erreur si WooCommerce n'est pas actif
-     */
     public function woocommerce_missing_notice() {
         ?>
         <div class="error">
@@ -80,82 +58,60 @@ class WC_One_Page_Checkout {
         <?php
     }
 
-    /**
-     * Charger le domaine de texte
-     */
     public function load_textdomain() {
         load_plugin_textdomain('wc-one-page-checkout', false, dirname(WC_OPC_BASENAME) . '/languages');
     }
 
-    /**
-     * Initialiser le plugin
-     */
     public function init() {
-        // Vérifier si WooCommerce est actif
         if (!class_exists('WooCommerce')) {
             return;
         }
     
-        // Charger les classes
         $this->load_dependencies();
-    
-        // Initialiser les composants principaux
         $this->initialize_components();
     
-        // Ajouter les scripts et styles
         add_action('wp_enqueue_scripts', array($this, 'enqueue_scripts'));
         add_action('admin_enqueue_scripts', array($this, 'admin_enqueue_scripts'));
+        
+        // Ajouter un cleanup plus fréquent des drafts expirées
+        add_action('wp', array($this, 'maybe_cleanup_drafts'));
     }
 
-    /**
-     * Lors de l'activation du plugin
-     */
     public function activate() {
-        // Créer les tables personnalisées si nécessaire
         require_once WC_OPC_PATH . 'includes/class-wc-opc-installer.php';
         $installer = new WC_OPC_Installer();
         $installer->install();
         
-        // Planifier la tâche cron pour nettoyer les commandes draft expirées
+        // Planifier le nettoyage toutes les 6 heures au lieu de quotidien
         if (!wp_next_scheduled('wc_opc_cleanup_expired_drafts')) {
-            wp_schedule_event(time(), 'daily', 'wc_opc_cleanup_expired_drafts');
+            wp_schedule_event(time(), 'twicedaily', 'wc_opc_cleanup_expired_drafts');
         }
         
-        // Mettre en place les paramètres par défaut
         $this->set_default_options();
         
-        // Créer les dossiers de journalisation si nécessaires
         $log_dir = WP_CONTENT_DIR . '/logs';
         if (!file_exists($log_dir)) {
             wp_mkdir_p($log_dir);
         }
         
-        // Essayer d'importer des données depuis l'ancienne version
         if (get_option('wc_opc_version') !== WC_OPC_VERSION) {
-            // Marquer que la migration est nécessaire
             update_option('wc_opc_needs_migration', 'yes');
         }
     }
 
-    /**
-     * Lors de la désactivation du plugin
-     */
     public function deactivate() {
-        // Supprimer la tâche cron
         wp_clear_scheduled_hook('wc_opc_cleanup_expired_drafts');
     }
 
-    /**
-     * Mettre en place les paramètres par défaut
-     */
     private function set_default_options() {
         $options = array(
             'wc_opc_enable_for_all' => 'yes',
             'wc_opc_form_title' => __('Commander maintenant', 'wc-one-page-checkout'),
             'wc_opc_button_text' => __('Commander', 'wc-one-page-checkout'),
-            'wc_opc_draft_expiration' => 86400, // 24 heures par défaut
+            'wc_opc_draft_expiration' => 86400, // 24 heures
             'wc_opc_enable_tracking' => 'yes',
             'wc_opc_debug_mode' => 'no',
+            'wc_opc_min_phone_length' => 8,
             'wc_opc_version' => WC_OPC_VERSION
         );
         
@@ -166,9 +122,6 @@ class WC_One_Page_Checkout {
         }
     }
 
-    /**
-     * Charger les dépendances
-     */
     private function load_dependencies() {
         // Classes utilitaires (doivent être chargées en premier)
         require_once WC_OPC_PATH . 'includes/utilities/class-wc-opc-cache.php';
@@ -186,42 +139,32 @@ class WC_One_Page_Checkout {
         require_once WC_OPC_PATH . 'includes/class-wc-opc-api.php';
     }
 
-    /**
-     * Initialiser les composants principaux
-     */
     private function initialize_components() {
-        // Initialiser les paramètres
-        $settings = new WC_OPC_Settings();
+        new WC_OPC_Settings();
+        new WC_OPC_Admin();
+        new WC_OPC_Draft_Manager();
+        new WC_OPC_Checkout();
+        new WC_OPC_Bundle_Manager();
+        new WC_OPC_Tracking();
+        new WC_OPC_API();
         
-        // Initialiser l'administration
-        $admin = new WC_OPC_Admin();
-        
-        // Initialiser le gestionnaire de commandes draft
-        $draft_manager = new WC_OPC_Draft_Manager();
-        
-        // Initialiser le checkout
-        $checkout = new WC_OPC_Checkout();
-        
-        // Initialiser la gestion des bundles
-        $bundle_manager = new WC_OPC_Bundle_Manager();
-        
-        // Initialiser le tracking
-        $tracking = new WC_OPC_Tracking();
-        
-        // Initialiser l'API
-        $api = new WC_OPC_API();
-        
-        // Démarrer la journalisation si le mode debug est activé
         if (get_option('wc_opc_debug_mode') === 'yes') {
             WC_OPC_Logger::get_instance()->enable_logging();
         }
     }
 
     /**
-     * Enregistrer les scripts et styles front-end
+     * Nettoyer les drafts expirées de manière occasionnelle
      */
+    public function maybe_cleanup_drafts() {
+        // Nettoyer seulement 1 fois sur 100 visites pour éviter la surcharge
+        if (rand(1, 100) === 1) {
+            $draft_manager = new WC_OPC_Draft_Manager();
+            $draft_manager->cleanup_expired_drafts();
+        }
+    }
+
     public function enqueue_scripts() {
-        // Ne charger que sur les pages produit
         if (!is_product()) {
             return;
         }
@@ -279,13 +222,24 @@ class WC_One_Page_Checkout {
             true
         );
         
-        // Ajouter les variables JS
+        // Variables JS
         global $product;
+        
+        // Obtenir les catégories du produit
+        $categories = '';
+        if ($product) {
+            $product_categories = wp_get_post_terms($product->get_id(), 'product_cat', array('fields' => 'names'));
+            if (!empty($product_categories) && !is_wp_error($product_categories)) {
+                $categories = implode(', ', $product_categories);
+            } else {
+                $categories = 'Tous les produits';
+            }
+        }
         
         wp_localize_script('wc-opc-script', 'wc_opc_params', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('wc-opc-nonce'),
-            'min_phone_length' => 8,
+            'min_phone_length' => get_option('wc_opc_min_phone_length', 8),
             'version' => WC_OPC_VERSION,
             'product' => array(
                 'id' => $product ? $product->get_id() : 0,
@@ -293,8 +247,10 @@ class WC_One_Page_Checkout {
                 'price' => $product ? $product->get_price() : 0,
                 'currency' => get_woocommerce_currency(),
                 'currency_symbol' => get_woocommerce_currency_symbol(),
+                'categories' => $categories
             ),
             'debug_mode' => get_option('wc_opc_debug_mode') === 'yes',
+            'enable_tracking' => get_option('wc_opc_enable_tracking', 'yes'),
             'reset_session' => isset($_GET['reset_opc_session']) ? 'yes' : 'no',
             'is_new_session' => isset($_COOKIE['wc_opc_order_completed']) ? 'yes' : 'no',
             'i18n' => array(
@@ -303,7 +259,8 @@ class WC_One_Page_Checkout {
                 'order_success' => __('Commande enregistrée avec succès!', 'wc-one-page-checkout'),
                 'offline_mode' => __('Vous êtes hors ligne. Vos données seront enregistrées localement.', 'wc-one-page-checkout'),
                 'online_mode' => __('Connexion rétablie. Synchronisation en cours...', 'wc-one-page-checkout'),
-                'session_reset' => __('Nouvelle session démarrée.', 'wc-one-page-checkout')
+                'session_reset' => __('Nouvelle session démarrée.', 'wc-one-page-checkout'),
+                'button_text' => get_option('wc_opc_button_text', __('Commander', 'wc-one-page-checkout'))
             )
         ));
         
@@ -324,7 +281,7 @@ class WC_One_Page_Checkout {
                             
                             // Afficher un message à l'utilisateur si besoin
                             if (typeof WC_OPC_Utils !== 'undefined') {
-                                WC_OPC_Utils.showMessage(wc_opc_params.i18n.session_reset, 'info');
+                                WC_OPC_Utils.showMessage(wc_opc_params.i18n.session_reset, 'info', 3000);
                             }
                         } catch (e) {
                             console.error('❌ Erreur lors du nettoyage de la session:', e);
@@ -342,11 +299,7 @@ class WC_One_Page_Checkout {
         }
     }
 
-    /**
-     * Enregistrer les scripts et styles admin
-     */
     public function admin_enqueue_scripts($hook) {
-        // Ne charger que sur les pages d'administration du plugin
         if ('woocommerce_page_wc-one-page-checkout' !== $hook) {
             return;
         }
@@ -366,7 +319,6 @@ class WC_One_Page_Checkout {
             true
         );
         
-        // Localiser le script admin
         wp_localize_script('wc-opc-admin-script', 'wc_opc_admin', array(
             'ajax_url' => admin_url('admin-ajax.php'),
             'nonce' => wp_create_nonce('wc-opc-admin-nonce'),
